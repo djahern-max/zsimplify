@@ -24,10 +24,10 @@ export function useReconciliation() {
     try {
       console.log('Starting file upload process...')
 
-      // Upload files and get paths
+      // Upload files with timestamps to avoid name conflicts
       const timestamp = Date.now()
-      const screenshotsPath = `reconciliation/${timestamp}-screenshots.xlsx`
-      const creditCardPath = `reconciliation/${timestamp}-creditcard.xlsx`
+      const screenshotsPath = `${timestamp}-screenshots.xlsx`
+      const creditCardPath = `${timestamp}-creditcard.xlsx`
 
       // Upload both files
       await Promise.all([
@@ -39,8 +39,12 @@ export function useReconciliation() {
 
       // Get signed URLs for the files
       const [screenshotsUrlData, creditCardUrlData] = await Promise.all([
-        supabase.storage.from('documents').createSignedUrl(screenshotsPath, 3600),
-        supabase.storage.from('documents').createSignedUrl(creditCardPath, 3600)
+        supabase.storage
+          .from('Test_Reconciliation_Data')
+          .createSignedUrl(screenshotsPath, 3600),
+        supabase.storage
+          .from('Test_Reconciliation_Data')
+          .createSignedUrl(creditCardPath, 3600)
       ])
 
       if (!screenshotsUrlData.data?.signedUrl || !creditCardUrlData.data?.signedUrl) {
@@ -69,8 +73,6 @@ export function useReconciliation() {
       if (!reconciliationResults.success) {
         throw new Error(reconciliationResults.error || 'Unknown error occurred')
       }
-
-      console.log('Reconciliation completed successfully')
 
       setResults({
         matches: reconciliationResults.matches,
