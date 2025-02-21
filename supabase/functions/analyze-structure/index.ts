@@ -58,7 +58,17 @@ serve(async (req) => {
         messages: [
           {
             role: "system",
-            content: `You are a data reconciliation expert. Your task is to analyze two files and suggest the best columns to match transactions. Provide structured JSON output.`
+            content: `You are a data reconciliation expert. Your task is to analyze two files and suggest the best matching columns.
+            Consider:
+            - Matching by Amount, Remark, or a combination of Name + Date.
+            - Providing a confidence score for each suggested match.
+            - Returning only structured JSON in this format:
+            {
+              "possibleMatches": [
+                {"file1Field": "Column1", "file2Field": "ColumnA", "confidence": "high"},
+                {"file1Field": "Column2", "file2Field": "ColumnB", "confidence": "medium"}
+              ]
+            }`
           },
           {
             role: "user",
@@ -70,23 +80,42 @@ serve(async (req) => {
         max_tokens: 500
       })
     });
+        
+    
 
-    const aiData = await openaiResponse.json();
-    const aiSuggestedMatches = aiData.choices?.[0]?.message?.content || "{}";
+   // Handle AI response
+const aiData = await openaiResponse.json();
+const aiSuggestedMatches = aiData.choices?.[0]?.message?.content;
 
-    return new Response(
-      JSON.stringify({
-        success: true,
-        file1Headers,
-        file2Headers,
-        aiSuggestedMatches: JSON.parse(aiSuggestedMatches)
-      }),
-      { headers: corsHeaders }
-    );
-  } catch (error) {
+try {
+  // Ensure the response is valid JSON
+  const structuredMatches = JSON.parse(aiSuggestedMatches); 
+
+  return new Response(
+    JSON.stringify({
+      success: true,
+      file1Headers,
+      file2Headers,
+      aiSuggestedMatches: structuredMatches
+    }),
+    { headers: corsHeaders }
+  );
+
+} catch (error) {
+  console.error("AI response was not valid JSON:", aiSuggestedMatches);
+  
+  return new Response(
+    JSON.stringify({ error: "Invalid AI response format" }),
+    { status: 500, headers: corsHeaders }
+  );
+}
+  }
+  catch (error) {
+    console.error("Error:", error);
+
     return new Response(
       JSON.stringify({ error: error.message }),
-      { status: 400, headers: corsHeaders }
+      { status: 500, headers: corsHeaders }
     );
   }
 });

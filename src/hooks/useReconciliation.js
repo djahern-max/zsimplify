@@ -1,28 +1,11 @@
 import { useState } from 'react'
 import * as XLSX from 'xlsx'
+import { supabase } from '../lib/supabase'
 
 export function useReconciliation() {
   const [results, setResults] = useState(null)
   const [error, setError] = useState(null)
   const [loading, setLoading] = useState(false)
-
-  const readExcelFile = (file) => {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader()
-      reader.onload = (e) => {
-        try {
-          const data = new Uint8Array(e.target.result)
-          const workbook = XLSX.read(data, { type: 'array' })
-          const firstSheet = workbook.Sheets[workbook.SheetNames[0]]
-          resolve(XLSX.utils.sheet_to_json(firstSheet))
-        } catch (err) {
-          reject(new Error('Error reading file: ' + err.message))
-        }
-      }
-      reader.onerror = () => reject(new Error('Error reading file'))
-      reader.readAsArrayBuffer(file)
-    })
-  }
 
   const handleFileUpload = async (e) => {
     e.preventDefault()
@@ -39,70 +22,57 @@ export function useReconciliation() {
     }
 
     try {
-      const [ssData, ccData] = await Promise.all([
-        readExcelFile(screenshots),
-        readExcelFile(creditCard)
+      // Upload files to Supabase
+      const screenshotsPath = `reconciliation/${Date.now()}-screenshots.xlsx`
+      const creditCardPath = `reconciliation/${Date.now()}-creditcard.xlsx`
+
+      const [screenshotsUpload, creditCardUpload] = await Promise.all([
+        supabase.storage.from('documents').upload(screenshotsPath, screenshots),
+        supabase.storage.from('documents').upload(creditCardPath, creditCard)
       ])
 
-      // Create lookup maps using concatenated key (Remark + Amount)
-      const matches = []
-      const unmatchedCC = [...ccData]
+      if (screenshotsUpload.error) throw screenshotsUpload.error
+      if (creditCardUpload.error) throw creditCardUpload.error
 
-      // Create lookup keys
-      ssData.forEach(ss => {
-        const ssKey = `${ss[' Remark ']}${ss.Amount}`
-        const ccIndex = unmatchedCC.findIndex(cc => {
-          const ccKey = `${cc[' Remark ']}${cc.Amount}`
-          return ssKey === ccKey
+      // Get public URLs for the files
+      const [screenshotsUrl, creditCardUrl] = await Promise.all([
+        supabase.storage.from('documents').getPublicUrl(screenshotsPath),
+        supabase.storage.from('documents').getPublicUrl(creditCardPath)
+      ])
+
+      // Call edge function for reconciliation
+      const response = await fetch('/api/reconcile', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          file1Url: screenshotsUrl.data.publicUrl,
+          file2Url: creditCardUrl.data.publicUrl
         })
-
-        if (ccIndex !== -1) {
-          matches.push({
-            screenshot: ss,
-            creditCard: unmatchedCC[ccIndex]
-          })
-          // Remove the matched transaction from unmatchedCC
-          unmatchedCC.splice(ccIndex, 1)
-        }
       })
 
-      // Create output workbook
-      const wb = XLSX.utils.book_new()
+      if (!response.ok) {
+        throw new Error('Reconciliation failed')
+      }
 
-      // Add matched transactions
-      const matchedSheet = XLSX.utils.json_to_sheet(
-        matches.map(m => ({
-          Amount: m.creditCard.Amount,
-          'Last 4': m.creditCard[' Remark '],
-          Description: m.creditCard.Description,
-          Status: 'Matched'
-        }))
-      )
-      XLSX.utils.book_append_sheet(wb, matchedSheet, 'Matches')
+      const reconciliationResults = await response.json()
 
-      // Add unmatched credit card transactions
-      if (unmatchedCC.length > 0) {
-        const unmatchedSheet = XLSX.utils.json_to_sheet(unmatchedCC)
-        XLSX.utils.book_append_sheet(wb, unmatchedSheet, 'Unmatched')
+      if (!reconciliationResults.success) {
+        throw new Error(reconciliationResults.error || 'Unknown error occurred')
       }
 
       setResults({
-        matches,
-        unmatched: unmatchedCC,
-        totalTransactions: ccData.length,
-        workbook: wb
+        matches: reconciliationResults.matches,
+        unmatched: reconciliationResults.unmatched,
+        totalTransactions: reconciliationResults.totalTransactions,
+        matchingCriteria: reconciliationResults.matchingCriteria,
+        stats: reconciliationResults.matchingStats
       })
 
     } catch (err) {
+      console.error('Reconciliation error:', err)
       setError(err.message)
     } finally {
       setLoading(false)
-    }
-  }
-
-  const exportResults = () => {
-    if (results?.workbook) {
-      XLSX.writeFile(results.workbook, 'reconciliation-results.xlsx')
     }
   }
 
@@ -110,7 +80,6 @@ export function useReconciliation() {
     results,
     error,
     loading,
-    handleFileUpload,
-    exportResults
+    handleFileUpload
   }
 }
