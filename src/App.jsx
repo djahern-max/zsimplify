@@ -1,11 +1,18 @@
-import React from 'react'
+// App.jsx
+import React, { useEffect } from 'react'
 import FileUpload from './components/FileUpload'
 import ReconciliationTable from './components/ReconciliationTable'
 import ExportButtons from './components/ExportButtons'
 import { useReconciliation } from './hooks/useReconciliation'
+import { initializeStorage } from './lib/supabase'
 
 export default function App() {
   const { results, error, loading, handleFileUpload } = useReconciliation()
+
+  useEffect(() => {
+    // Initialize storage bucket when app loads
+    initializeStorage().catch(console.error)
+  }, [])
 
   return (
     <div className="min-h-screen bg-gray-100 py-6 flex flex-col justify-center sm:py-12">
@@ -16,7 +23,7 @@ export default function App() {
               <div className="py-8 text-base leading-6 space-y-4 text-gray-700 sm:text-lg sm:leading-7">
                 <h1 className="text-2xl font-bold mb-8">zSimplify</h1>
                 <FileUpload onSubmit={handleFileUpload} />
-                
+
                 {loading && (
                   <div className="text-center py-4">
                     <p>Processing...</p>

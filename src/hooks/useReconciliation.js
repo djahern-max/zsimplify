@@ -1,35 +1,11 @@
-// useReconciliation.js
+// hooks/useReconciliation.js
 import { useState } from 'react'
-import * as XLSX from 'xlsx'
+import { supabase, uploadFile } from '../lib/supabase'
 
 export function useReconciliation() {
   const [results, setResults] = useState(null)
   const [error, setError] = useState(null)
   const [loading, setLoading] = useState(false)
-
-  const readExcelFile = (file) => {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader()
-      reader.onload = (e) => {
-        try {
-          const data = new Uint8Array(e.target.result)
-          const workbook = XLSX.read(data, { type: 'array' })
-          const firstSheet = workbook.Sheets[workbook.SheetNames[0]]
-          resolve(XLSX.utils.sheet_to_json(firstSheet))
-        } catch (err) {
-          reject(new Error('Error reading file: ' + err.message))
-        }
-      }
-      reader.onerror = () => reject(new Error('Error reading file'))
-      reader.readAsArrayBuffer(file)
-    })
-  }
-
-  const normalizeAmount = (amount) => {
-    if (!amount) return null
-    const str = amount.toString().trim()
-    return parseFloat(str.replace(/[^0-9.-]/g, ''))
-  }
 
   const handleFileUpload = async (e) => {
     e.preventDefault()
@@ -46,52 +22,65 @@ export function useReconciliation() {
     }
 
     try {
-      const [ssData, ccData] = await Promise.all([
-        readExcelFile(screenshots),
-        readExcelFile(creditCard)
+      console.log('Starting file upload process...')
+
+      // Upload files and get paths
+      const timestamp = Date.now()
+      const screenshotsPath = `reconciliation/${timestamp}-screenshots.xlsx`
+      const creditCardPath = `reconciliation/${timestamp}-creditcard.xlsx`
+
+      // Upload both files
+      await Promise.all([
+        uploadFile(screenshots, screenshotsPath),
+        uploadFile(creditCard, creditCardPath)
       ])
 
-      const matches = []
-      const unmatched = []
+      console.log('Files uploaded successfully')
 
-      // Create lookup map for credit card data
-      const ccMap = new Map()
-      ccData.forEach(trans => {
-        const amount = normalizeAmount(trans.Amount)
-        const last4 = trans[' Last4 ']?.toString().trim()
-        const key = `${last4}-${amount}`
-        ccMap.set(key, trans)
+      // Get signed URLs for the files
+      const [screenshotsUrlData, creditCardUrlData] = await Promise.all([
+        supabase.storage.from('documents').createSignedUrl(screenshotsPath, 3600),
+        supabase.storage.from('documents').createSignedUrl(creditCardPath, 3600)
+      ])
+
+      if (!screenshotsUrlData.data?.signedUrl || !creditCardUrlData.data?.signedUrl) {
+        throw new Error('Failed to generate signed URLs')
+      }
+
+      console.log('Signed URLs generated successfully')
+
+      // Call edge function for reconciliation
+      const response = await fetch('/api/reconcile-documents', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          file1Url: screenshotsUrlData.data.signedUrl,
+          file2Url: creditCardUrlData.data.signedUrl
+        })
       })
 
-      // Match screenshot transactions
-      ssData.forEach(trans => {
-        const amount = normalizeAmount(trans.Amount)
-        const remark = trans[' Remark ']?.toString().trim()
-        const key = `${remark}-${amount}`
+      if (!response.ok) {
+        const errorText = await response.text()
+        throw new Error(`Reconciliation failed: ${errorText}`)
+      }
 
-        const matchingTrans = ccMap.get(key)
-        if (matchingTrans) {
-          matches.push({
-            creditCard: matchingTrans,
-            screenshot: trans
-          })
-          ccMap.delete(key)
-        } else {
-          unmatched.push(trans)
-        }
-      })
+      const reconciliationResults = await response.json()
+
+      if (!reconciliationResults.success) {
+        throw new Error(reconciliationResults.error || 'Unknown error occurred')
+      }
+
+      console.log('Reconciliation completed successfully')
 
       setResults({
-        matches,
-        unmatched,
-        totalTransactions: ssData.length,
-        matchingStats: {
-          matched: matches.length,
-          unmatched: unmatched.length
-        }
+        matches: reconciliationResults.matches,
+        unmatched: reconciliationResults.unmatched,
+        totalTransactions: reconciliationResults.totalTransactions,
+        matchingStats: reconciliationResults.matchingStats
       })
 
     } catch (err) {
+      console.error('Reconciliation error:', err)
       setError(err.message)
     } finally {
       setLoading(false)
