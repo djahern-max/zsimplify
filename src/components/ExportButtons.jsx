@@ -8,10 +8,10 @@ export default function ExportButtons({ results }) {
     const workbook = XLSX.utils.book_new()
 
     // Add matched items
-    if (results.matches.length > 0) {
+    if (results.matches && results.matches.length > 0) {
       const matchedData = results.matches.map(m => ({
         Amount: m.creditCard.Amount,
-        Remark: m.creditCard[' Remark '],
+        'Last 4': m.creditCard[' Remark '],
         Description: m.creditCard.Description,
         Status: 'Matched'
       }))
@@ -19,21 +19,20 @@ export default function ExportButtons({ results }) {
       XLSX.utils.book_append_sheet(workbook, matchedSheet, 'Matches')
     }
 
-    // Add unmatched items
-    if (results.unmatched.screenshots.length > 0) {
-      XLSX.utils.book_append_sheet(
-        workbook,
-        XLSX.utils.json_to_sheet(results.unmatched.screenshots),
-        'Unmatched Screenshots'
-      )
+    // Add unmatched credit card transactions
+    if (results.unmatched && results.unmatched.length > 0) {
+      const unmatchedSheet = XLSX.utils.json_to_sheet(results.unmatched)
+      XLSX.utils.book_append_sheet(workbook, unmatchedSheet, 'Unmatched')
     }
-    if (results.unmatched.creditCard.length > 0) {
-      XLSX.utils.book_append_sheet(
-        workbook,
-        XLSX.utils.json_to_sheet(results.unmatched.creditCard),
-        'Unmatched Credit Card'
-      )
-    }
+
+    // Add summary sheet
+    const summaryData = [{
+      'Total Transactions': results.totalTransactions,
+      'Matched Transactions': results.matches.length,
+      'Unmatched Transactions': results.unmatched.length
+    }]
+    const summarySheet = XLSX.utils.json_to_sheet(summaryData)
+    XLSX.utils.book_append_sheet(workbook, summarySheet, 'Summary')
 
     XLSX.writeFile(workbook, 'reconciliation-results.xlsx')
   }

@@ -28,7 +28,7 @@ export function useReconciliation() {
     e.preventDefault()
     setError(null)
     setLoading(true)
-    
+
     const screenshots = e.target.screenshots.files[0]
     const creditCard = e.target.creditCard.files[0]
 
@@ -44,29 +44,55 @@ export function useReconciliation() {
         readExcelFile(creditCard)
       ])
 
+      // Create lookup maps using concatenated key (Remark + Amount)
       const matches = []
-      const unmatched = {
-        screenshots: [...ssData],
-        creditCard: [...ccData]
-      }
+      const unmatchedCC = [...ccData]
 
-      ssData.forEach((ss, ssIndex) => {
-        const ccIndex = ccData.findIndex(cc => 
-          cc.Amount === ss.Amount && 
-          cc[' Remark '] === ss[' Remark ']
-        )
+      // Create lookup keys
+      ssData.forEach(ss => {
+        const ssKey = `${ss[' Remark ']}${ss.Amount}`
+        const ccIndex = unmatchedCC.findIndex(cc => {
+          const ccKey = `${cc[' Remark ']}${cc.Amount}`
+          return ssKey === ccKey
+        })
 
         if (ccIndex !== -1) {
           matches.push({
             screenshot: ss,
-            creditCard: ccData[ccIndex]
+            creditCard: unmatchedCC[ccIndex]
           })
-          unmatched.screenshots = unmatched.screenshots.filter((_, i) => i !== ssIndex)
-          unmatched.creditCard = unmatched.creditCard.filter((_, i) => i !== ccIndex)
+          // Remove the matched transaction from unmatchedCC
+          unmatchedCC.splice(ccIndex, 1)
         }
       })
 
-      setResults({ matches, unmatched })
+      // Create output workbook
+      const wb = XLSX.utils.book_new()
+
+      // Add matched transactions
+      const matchedSheet = XLSX.utils.json_to_sheet(
+        matches.map(m => ({
+          Amount: m.creditCard.Amount,
+          'Last 4': m.creditCard[' Remark '],
+          Description: m.creditCard.Description,
+          Status: 'Matched'
+        }))
+      )
+      XLSX.utils.book_append_sheet(wb, matchedSheet, 'Matches')
+
+      // Add unmatched credit card transactions
+      if (unmatchedCC.length > 0) {
+        const unmatchedSheet = XLSX.utils.json_to_sheet(unmatchedCC)
+        XLSX.utils.book_append_sheet(wb, unmatchedSheet, 'Unmatched')
+      }
+
+      setResults({
+        matches,
+        unmatched: unmatchedCC,
+        totalTransactions: ccData.length,
+        workbook: wb
+      })
+
     } catch (err) {
       setError(err.message)
     } finally {
@@ -74,10 +100,17 @@ export function useReconciliation() {
     }
   }
 
+  const exportResults = () => {
+    if (results?.workbook) {
+      XLSX.writeFile(results.workbook, 'reconciliation-results.xlsx')
+    }
+  }
+
   return {
     results,
     error,
     loading,
-    handleFileUpload
+    handleFileUpload,
+    exportResults
   }
 }
