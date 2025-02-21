@@ -1,4 +1,3 @@
-// supabase/functions/reconcile-documents/index.ts
 // @ts-nocheck
 import { serve } from 'https://deno.land/std@0.208.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.38.4'
@@ -7,6 +6,7 @@ import * as XLSX from 'https://esm.sh/xlsx@0.18.5'
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Content-Type': 'application/json',
 }
 
 serve(async (req) => {
@@ -14,132 +14,96 @@ serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
   }
-  
+
   try {
-    const { receiptFileUrl, statementFileUrl, testUserId } = await req.json()
-    
-    // Create Supabase client with anon key for testing
+    const { file1Url, file2Url, matchingRules, testUserId } = await req.json()
+
+    // Create Supabase client
     const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? ''
     const supabaseKey = Deno.env.get('SUPABASE_ANON_KEY') ?? ''
     const supabase = createClient(supabaseUrl, supabaseKey)
-    
-    // TEMPORARY: Use testUserId instead of getting the user from auth
+
     const userId = testUserId || 'anonymous-user'
-    
     console.log('Processing files for user:', userId)
-    console.log('Receipt file URL:', receiptFileUrl)
-    console.log('Statement file URL:', statementFileUrl)
+    console.log('File 1 URL:', file1Url)
+    console.log('File 2 URL:', file2Url)
     
-    // Download files from the signed URLs
-    const receiptRes = await fetch(receiptFileUrl)
-    const statementRes = await fetch(statementFileUrl)
-    
-    if (!receiptRes.ok || !statementRes.ok) {
-      throw new Error('Failed to download files')
+    // Fetch files from storage
+    const file1Res = await fetch(file1Url)
+    const file2Res = await fetch(file2Url)
+
+    if (!file1Res.ok || !file2Res.ok) {
+      throw new Error('Failed to download one or both files')
     }
-    
-    const receiptBuffer = await receiptRes.arrayBuffer()
-    const statementBuffer = await statementRes.arrayBuffer()
-    
+
+    const file1Buffer = await file1Res.arrayBuffer()
+    const file2Buffer = await file2Res.arrayBuffer()
+
     console.log('Files downloaded successfully')
-    
-    // Process Excel files
-    const receiptWorkbook = XLSX.read(new Uint8Array(receiptBuffer), {
-      type: 'array',
-      cellDates: true,
-      cellNF: true,
-      raw: false
-    })
-    
-    const statementWorkbook = XLSX.read(new Uint8Array(statementBuffer), {
-      type: 'array',
-      cellDates: true,
-      cellNF: true,
-      raw: false
-    })
-    
-    const receipts = XLSX.utils.sheet_to_json(
-      receiptWorkbook.Sheets[receiptWorkbook.SheetNames[0]],
-      { raw: false, defval: null }
-    )
-    
-    const statements = XLSX.utils.sheet_to_json(
-      statementWorkbook.Sheets[statementWorkbook.SheetNames[0]],
-      { raw: false, defval: null }
-    )
-    
-    console.log('Receipts processed:', receipts.length)
-    console.log('Statements processed:', statements.length)
-    
-    // Simple matching logic (you can implement the AI matching here if needed)
+
+    // Read Excel files
+    const file1Workbook = XLSX.read(new Uint8Array(file1Buffer), { type: 'array' })
+    const file2Workbook = XLSX.read(new Uint8Array(file2Buffer), { type: 'array' })
+
+    const file1Data = XLSX.utils.sheet_to_json(file1Workbook.Sheets[file1Workbook.SheetNames[0]], { raw: false, defval: null })
+    const file2Data = XLSX.utils.sheet_to_json(file2Workbook.Sheets[file2Workbook.SheetNames[0]], { raw: false, defval: null })
+
+    console.log('Rows in File 1:', file1Data.length)
+    console.log('Rows in File 2:', file2Data.length)
+
+    // Ensure AI-determined matching rules exist
+    if (!matchingRules || matchingRules.length === 0) {
+      throw new Error('No matching rules provided')
+    }
+    console.log('Matching rules:', matchingRules)
+
+    // Perform reconciliation based on AI suggestions
     const matches = []
-    
-    for (const receipt of receipts) {
-      // Normalize receipt amount to handle potential formatting issues
-      const normalizedReceipt = {
-        ...receipt,
-        amount: typeof receipt.amount === 'string'
-          ? parseFloat(receipt.amount.replace(/[^0-9.-]+/g, ''))
-          : receipt.amount
-      }
-      
-      for (const statement of statements) {
-        // Normalize statement amount
-        const normalizedStatement = {
-          ...statement,
-          Amount: typeof statement.Amount === 'string'
-            ? parseFloat(statement.Amount.replace(/[^0-9.-]+/g, ''))
-            : statement.Amount
+    const unmatched = []
+
+    for (const row1 of file1Data) {
+      let foundMatch = false
+      let matchDetails = {}
+
+      for (const row2 of file2Data) {
+        let isMatch = true
+        let matchReasons = []
+
+        for (const rule of matchingRules) {
+          const value1 = row1[rule.file1Field]?.toString().trim() || ''
+          const value2 = row2[rule.file2Field]?.toString().trim() || ''
+
+          if (value1 !== value2) {
+            isMatch = false
+            matchReasons.push(`Mismatch in ${rule.file1Field} vs ${rule.file2Field}`)
+          }
         }
-        
-        // Simple matching logic - check if amount and last 4 digits match
-        const receiptAmount = normalizedReceipt.amount
-        const statementAmount = normalizedStatement.Amount
-        const receiptRemark = String(normalizedReceipt.remark || '')
-        const statementRemark = String(normalizedStatement.Remark || '')
-        
-        let isMatch = false
-        let confidence = "No match"
-        
-        // Basic matching criteria
-        // 1. Exact amount match
-        if (receiptAmount === statementAmount) {
-          isMatch = true
-          confidence = "MATCH: Amount"
-        }
-        
-        // 2. Last 4 digits match
-        if (receiptRemark === statementRemark) {
-          isMatch = true
-          confidence = isMatch ? "MATCH: Amount and Remark" : "MATCH: Remark"
-        }
-        
+
         if (isMatch) {
-          matches.push({
-            receipt: normalizedReceipt,
-            statement: normalizedStatement,
-            confidence: confidence
-          })
+          foundMatch = true
+          matchDetails = { file1: row1, file2: row2, confidence: "high", reasons: matchReasons }
+          matches.push(matchDetails)
+          break // Stop checking once a match is found
         }
+      }
+
+      if (!foundMatch) {
+        unmatched.push(row1)
       }
     }
-    
-    console.log('Matches found:', matches.length)
-    
+
+    console.log(`Matches found: ${matches.length}, Unmatched records: ${unmatched.length}`)
+
     return new Response(
-      JSON.stringify({ 
-        success: true, 
-        matches, 
-        matchCount: matches.length,
-      }),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      JSON.stringify({ success: true, matches, unmatched, matchCount: matches.length }),
+      { headers: corsHeaders }
     )
-    
+
   } catch (error) {
     console.error('Error in Edge Function:', error)
     return new Response(
       JSON.stringify({ error: error.message || 'Unknown error occurred' }),
-      { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      { status: 400, headers: corsHeaders }
     )
   }
 })
