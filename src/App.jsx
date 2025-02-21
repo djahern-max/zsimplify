@@ -5,7 +5,7 @@ import ExportButtons from './components/ExportButtons'
 import { useReconciliation } from './hooks/useReconciliation'
 
 export default function App() {
-  const { results } = useReconciliation()
+  const { results, error, loading, handleFileUpload } = useReconciliation()
 
   return (
     <div className="min-h-screen bg-gray-100 py-6 flex flex-col justify-center sm:py-12">
@@ -15,9 +15,22 @@ export default function App() {
             <div className="divide-y divide-gray-200">
               <div className="py-8 text-base leading-6 space-y-4 text-gray-700 sm:text-lg sm:leading-7">
                 <h1 className="text-2xl font-bold mb-8">zSimplify</h1>
-                <FileUpload />
+                <FileUpload onSubmit={handleFileUpload} />
+                
+                {loading && (
+                  <div className="text-center py-4">
+                    <p>Processing...</p>
+                  </div>
+                )}
+
+                {error && (
+                  <div className="text-red-500 py-4">
+                    <p>{error}</p>
+                  </div>
+                )}
+
                 <ReconciliationTable results={results} />
-                {results?.length > 0 && <ExportButtons results={results} />}
+                {results && <ExportButtons results={results} />}
               </div>
             </div>
           </div>

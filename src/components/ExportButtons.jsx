@@ -1,29 +1,49 @@
 import React from 'react'
-import exportUtils from '../lib/export'
+import * as XLSX from 'xlsx'
 
 export default function ExportButtons({ results }) {
+  if (!results) return null
+
+  const exportToExcel = () => {
+    const workbook = XLSX.utils.book_new()
+
+    // Add matched items
+    if (results.matches.length > 0) {
+      const matchedData = results.matches.map(m => ({
+        Amount: m.creditCard.Amount,
+        Remark: m.creditCard[' Remark '],
+        Description: m.creditCard.Description,
+        Status: 'Matched'
+      }))
+      const matchedSheet = XLSX.utils.json_to_sheet(matchedData)
+      XLSX.utils.book_append_sheet(workbook, matchedSheet, 'Matches')
+    }
+
+    // Add unmatched items
+    if (results.unmatched.screenshots.length > 0) {
+      XLSX.utils.book_append_sheet(
+        workbook,
+        XLSX.utils.json_to_sheet(results.unmatched.screenshots),
+        'Unmatched Screenshots'
+      )
+    }
+    if (results.unmatched.creditCard.length > 0) {
+      XLSX.utils.book_append_sheet(
+        workbook,
+        XLSX.utils.json_to_sheet(results.unmatched.creditCard),
+        'Unmatched Credit Card'
+      )
+    }
+
+    XLSX.writeFile(workbook, 'reconciliation-results.xlsx')
+  }
+
   return (
-    <div className="mt-6 flex space-x-4">
-      <button
-        onClick={() => exportUtils.exportToExcel(results)}
-        className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
-      >
-        Export to Excel
-      </button>
-
-      <button
-        onClick={() => exportUtils.exportToCSV(results)}
-        className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
-      >
-        Export to CSV
-      </button>
-
-      <button
-        onClick={() => exportUtils.exportToPDF(results)}
-        className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-purple-600 hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500"
-      >
-        Export to PDF
-      </button>
-    </div>
+    <button
+      onClick={exportToExcel}
+      className="mt-4 bg-green-500 text-white px-4 py-2 rounded hover:bg-green-600"
+    >
+      Export Results
+    </button>
   )
 }
